@@ -39,6 +39,7 @@ func (l PaymentTransaction) Validate() error {
 
 type PaymentMethod struct {
 	ID         int       `json:"id"`
+	UserID     uint64    `json:"user_id"`
 	SourceID   int       `json:"source_id"`
 	SourceName string    `json:"source_name" gorm:"column:source_name;type:varchar(50)"`
 	CreatedAt  time.Time `json:"-"`
