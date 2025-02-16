@@ -25,6 +25,20 @@ type PaymentLinkResponse struct {
 	} `json:"data"`
 }
 
+type PaymentTransactionRequest struct {
+	Amount          float64 `json:"amount"`
+	Reference       string  `json:"reference"`
+	TransactionType string  `json:"transaction_type"`
+	WalletID        int     `json:"wallet_id"`
+}
+
+type PaymentTransactionResponse struct {
+	Message string `json:"message"`
+	Data    struct {
+		Balance float64 `json:"balance"`
+	} `json:"data"`
+}
+
 func (e *External) generateSignature(ctx context.Context, payload, timestamp, endpoint string) string {
 	secretKey := helpers.GetEnv("WALLET_CLIENT_SECRET", "")
 
@@ -150,6 +164,46 @@ func (e *External) PaymentLinkConfirmation(ctx context.Context, walletID int, ot
 	}
 
 	response := PaymentLinkResponse{}
+	err = json.NewDecoder(resp.Body).Decode(&response)
+	if err != nil {
+		return response, errors.Wrap(err, "failed to decode the response")
+	}
+
+	return response, nil
+}
+
+func (e *External) WalletTransaction(ctx context.Context, req PaymentTransactionRequest) (PaymentTransactionResponse, error) {
+	url := helpers.GetEnv("WALLET_HOST", "") + helpers.GetEnv("WALLET_ENDPOINT_TRANSACTION", "")
+
+	bytePayload, err := json.Marshal(req)
+
+	if err != nil {
+		return PaymentTransactionResponse{}, errors.Wrap(err, "failed to marshaling request")
+	}
+
+	httpReq, err := http.NewRequest(http.MethodPost, url, bytes.NewBuffer(bytePayload))
+	if err != nil {
+		return PaymentTransactionResponse{}, errors.Wrap(err, "failed to create http request")
+	}
+
+	timestamp := time.Now().Format(time.RFC3339)
+	signature := e.generateSignature(ctx, string(bytePayload), timestamp, helpers.GetEnv("WALLET_ENDPOINT_TRANSACTION", ""))
+
+	httpReq.Header.Set("Client-Id", helpers.GetEnv("WALLET_CLIENT_ID", ""))
+	httpReq.Header.Set("Timestamp", timestamp)
+	httpReq.Header.Set("Signature", signature)
+
+	client := &http.Client{}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return PaymentTransactionResponse{}, errors.Wrap(err, "failed to call wallet transaction")
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return PaymentTransactionResponse{}, fmt.Errorf("got response failed from wallet transaction resp : %d", resp.StatusCode)
+	}
+
+	response := PaymentTransactionResponse{}
 	err = json.NewDecoder(resp.Body).Decode(&response)
 	if err != nil {
 		return response, errors.Wrap(err, "failed to decode the response")

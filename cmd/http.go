@@ -20,7 +20,7 @@ func ServeHTTP() {
 	paymentV1 := e.Group("/payment/v1")
 	paymentV1.POST("/link", d.PaymentAPI.PaymentMethodLink, d.MiddlewareValidateAuth)
 	paymentV1.POST("/link/confirm", d.PaymentAPI.PaymentMethodOTP, d.MiddlewareValidateAuth)
-	paymentV1.POST("/unlink", d.PaymentAPI.PaymentMethodUnlink, d.MiddlewareValidateAuth)
+	paymentV1.DELETE("/unlink", d.PaymentAPI.PaymentMethodUnlink, d.MiddlewareValidateAuth)
 
 	e.Start(":" + helpers.GetEnv("PORT", "9000"))
 }

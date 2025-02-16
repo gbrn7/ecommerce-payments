@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"ecommerce-payments/external"
 	"ecommerce-payments/helpers"
 	"ecommerce-payments/internal/interfaces"
 	"ecommerce-payments/internal/models"
@@ -46,4 +47,81 @@ func (s *PaymentService) PaymentMethodUnlink(ctx context.Context, userID uint64,
 	}
 
 	return s.PaymentRepo.DeletePaymentMethod(ctx, userID, req.SourceID, "fastcampus_ewallet")
+}
+
+func (s *PaymentService) InitiatePayment(ctx context.Context, req models.PaymentInitiatePayload) error {
+	paymentMethod, err := s.PaymentRepo.GetPaymentMethod(ctx, req.UserID, "fastcampus_ewallet")
+	if err != nil {
+		return errors.Wrap(err, "failed to get payment method")
+	}
+	trxReq := external.PaymentTransactionRequest{
+		Amount:          req.TotalPrice,
+		Reference:       helpers.GenerateReference(),
+		TransactionType: "DEBIT",
+		WalletID:        paymentMethod.SourceID,
+	}
+	resp, err := s.External.WalletTransaction(ctx, trxReq)
+	if err != nil {
+		return errors.Wrap(err, "failed to precees to wallet transaction")
+	}
+
+	helpers.Logger.WithField("balance", resp.Data.Balance).Info("succeed to payment")
+	paymentTrx := models.PaymentTransaction{
+		UserID:           req.UserID,
+		OrderID:          req.OrderID,
+		TotalPrice:       req.TotalPrice,
+		PaymentMethodID:  paymentMethod.ID,
+		Status:           "SUCCESS",
+		PaymentReference: trxReq.Reference,
+	}
+
+	err = s.PaymentRepo.InsertNewPaymentTransaction(ctx, &paymentTrx)
+	if err != nil {
+		return errors.Wrap(err, "failed to insert to payment transaction")
+	}
+
+	_, err = s.External.OrderCallback(ctx, req.OrderID, "SUCCESS")
+	if err != nil {
+		return errors.Wrap(err, "failed to send callback to order service")
+	}
+
+	return nil
+}
+
+func (s *PaymentService) RefundPayment(ctx context.Context, req models.RefundPayload) error {
+	paymentDetail, err := s.PaymentRepo.GetPaymentByOrderID(ctx, req.OrderID)
+	if err != nil {
+		return errors.Wrap(err, "failed to get payment detail")
+	}
+
+	paymentMethod, err := s.PaymentRepo.GetPaymentMethodByID(ctx, paymentDetail.PaymentMethodID)
+	if err != nil {
+		return errors.Wrap(err, "failed to get payment method")
+	}
+	trxReq := external.PaymentTransactionRequest{
+		Amount:          paymentDetail.TotalPrice,
+		Reference:       "REFUND" + paymentDetail.PaymentReference,
+		TransactionType: "CREDIT",
+		WalletID:        paymentMethod.SourceID,
+	}
+	resp, err := s.External.WalletTransaction(ctx, trxReq)
+	if err != nil {
+		return errors.Wrap(err, "failed to preccess to wallet transaction")
+	}
+
+	helpers.Logger.WithField("balance", resp.Data.Balance).Info("succeed to refund")
+
+	refund := models.PaymentRefund{
+		AdminID:          req.AdminID,
+		OrderID:          req.OrderID,
+		Status:           "SUCCESS",
+		PaymentReference: trxReq.Reference,
+	}
+
+	err = s.PaymentRepo.InsertNewPaymentRefund(ctx, &refund)
+	if err != nil {
+		return errors.Wrap(err, "failed to insert to payment transaction")
+	}
+
+	return nil
 }

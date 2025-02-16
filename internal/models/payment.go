@@ -19,6 +19,7 @@ type RefundPayload struct {
 
 type PaymentTransaction struct {
 	ID               int       `json:"id"`
+	UserID           uint64    `json:"user_id"`
 	OrderID          int       `json:"order_id" validate:"required"`
 	PaymentMethodID  int       `json:"payment_method_id" validate:"required"`
 	TotalPrice       float64   `json:"total_price" gorm:"column:total_price;type:decimal(10,2)"`
@@ -51,6 +52,25 @@ func (*PaymentMethod) TableName() string {
 }
 
 func (l PaymentMethod) Validate() error {
+	v := validator.New()
+	return v.Struct(l)
+}
+
+type PaymentRefund struct {
+	ID               int       `json:"id"`
+	AdminID          uint64    `json:"admin_id"`
+	OrderID          int       `json:"order_id" validate:"required"`
+	Status           string    `json:"status" gorm:"column:status;type:varchar(10)"`
+	PaymentReference string    `json:"payment_reference" gorm:"column:payment_reference;type:varchar(100)"`
+	CreatedAt        time.Time `json:"-"`
+	UpdatedAt        time.Time `json:"-"`
+}
+
+func (*PaymentRefund) TableName() string {
+	return "payment_refunds"
+}
+
+func (l PaymentRefund) Validate() error {
 	v := validator.New()
 	return v.Struct(l)
 }

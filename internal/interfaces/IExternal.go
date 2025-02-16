@@ -13,4 +13,7 @@ type IExternal interface {
 	PaymentLink(ctx context.Context, req models.PaymentMethodLinkRequest) (external.PaymentLinkResponse, error)
 	PaymentUnLink(ctx context.Context, req models.PaymentMethodLinkRequest) (external.PaymentLinkResponse, error)
 	PaymentLinkConfirmation(ctx context.Context, walletID int, otp string) (external.PaymentLinkResponse, error)
+	WalletTransaction(ctx context.Context, req external.PaymentTransactionRequest) (external.PaymentTransactionResponse, error)
+
+	OrderCallback(ctx context.Context, orderID int, status string) (external.OrderResponse, error)
 }
