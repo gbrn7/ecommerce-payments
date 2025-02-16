@@ -1,80 +1,84 @@
 package cmd
 
 import (
+	"context"
 	"ecommerce-payments/helpers"
-	"strconv"
 	"strings"
+	"time"
 
 	"github.com/IBM/sarama"
 )
 
-func ServeKafkaConsumerPaymentInit() {
-	d := dependencyInject()
-
-	brokers := strings.Split(helpers.GetEnv("KAFKA_BROKERS", "localhost:29092,localhost:29093,localhost:29094"), ",")
-	topic := helpers.GetEnv("KAFKA_TOPIC_PAYMENT_INITIATE", "payment-initiation-topic")
-
-	config := sarama.NewConfig()
-	config.Consumer.Return.Errors = true
-	config.Consumer.Offsets.AutoCommit.Enable = true
-
-	consumer, err := sarama.NewConsumer(brokers, config)
-	if err != nil {
-		helpers.Logger.Error("failed to connect with kafka consumer payment init ", err)
-		return
-	}
-
-	partitionNumberStr := helpers.GetEnv("KAFKA_TOPIC_PAYMENT_INITIATE_PARTITION", "3")
-	partitionNumber, _ := strconv.Atoi(partitionNumberStr)
-	for i := int32(0); i < int32(partitionNumber); i++ {
-		partitionConsumer, err := consumer.ConsumePartition(topic, i, sarama.OffsetNewest)
-		if err != nil {
-			helpers.Logger.Errorf("failed to create consumer partition %d %s", i, err)
-			return
-		}
-
-		for msg := range partitionConsumer.Messages() {
-			helpers.Logger.Infof("Receive message: %s from partition %d", string(msg.Value), msg.Partition)
-			err := d.PaymentAPI.InitiatePayment(msg.Value)
-			if err != nil {
-				helpers.Logger.Error("failed to process payment ", err)
-			}
-		}
-	}
-
+type PaymentInitiateHandler struct {
+	Dependency   Dependency
+	TopicPayment string
+	TopicRefund  string
 }
 
-func ServeKafkaConsumerRefund() {
-	d := dependencyInject()
+func (h *PaymentInitiateHandler) Setup(sarama.ConsumerGroupSession) error {
+	return nil
+}
 
-	brokers := strings.Split(helpers.GetEnv("KAFKA_BROKERS", "localhost:29092,localhost:29093,localhost:29094"), ",")
-	topic := helpers.GetEnv("KAFKA_TOPIC_REFUND", "refund-topic")
+func (h *PaymentInitiateHandler) Cleanup(sarama.ConsumerGroupSession) error {
+	return nil
+}
+
+func (h *PaymentInitiateHandler) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
+	for msg := range claim.Messages() {
+		helpers.Logger.Infof("Received message: %s from partition %d", string(msg.Value), msg.Partition)
+
+		switch msg.Topic {
+		case h.TopicPayment:
+			err := h.Dependency.PaymentAPI.InitiatePayment(msg.Value)
+			if err != nil {
+				helpers.Logger.Error("failed to process payment: ", err)
+			}
+		case h.TopicRefund:
+			err := h.Dependency.PaymentAPI.RefundPayment(msg.Value)
+			if err != nil {
+				helpers.Logger.Error("failed to process payment: ", err)
+			}
+		default:
+			helpers.Logger.Error("invalid topic: ", msg.Topic)
+		}
+
+		session.MarkMessage(msg, "")
+	}
+	return nil
+}
+
+func ServeKafkaConsumerGroup() {
+	d := dependencyInject()
+	topicPayment := helpers.GetEnv("KAFKA_TOPIC_PAYMENT_INITIATE", "payment-initiation-topic")
+	topicRefund := helpers.GetEnv("KAFKA_TOPIC_REFUND", "refund-topic")
+
+	brokers := strings.Split(helpers.GetEnv("KAFKA_BROKERS", "localhost:9092"), ",")
+	groupID := helpers.GetEnv("KAFKA_CONSUMER_GROUP", "ecommerce-payment-group")
 
 	config := sarama.NewConfig()
 	config.Consumer.Return.Errors = true
+	config.Consumer.Group.Rebalance.Strategy = sarama.NewBalanceStrategyRoundRobin()
+	config.Consumer.Offsets.Initial = sarama.OffsetOldest
 	config.Consumer.Offsets.AutoCommit.Enable = true
+	config.Consumer.Offsets.AutoCommit.Interval = time.Second * 1
 
-	consumer, err := sarama.NewConsumer(brokers, config)
+	consumerGroup, err := sarama.NewConsumerGroup(brokers, groupID, config)
 	if err != nil {
-		helpers.Logger.Error("failed to connect with kafka consumer refund", err)
+		helpers.Logger.Error("Failed to connect with kafka as consumer", err)
 		return
 	}
+	defer consumerGroup.Close()
 
-	partitionNumberStr := helpers.GetEnv("KAFKA_TOPIC_REFUND_PARTITION", "3")
-	partitionNumber, _ := strconv.Atoi(partitionNumberStr)
-	for i := int32(0); i < int32(partitionNumber); i++ {
-		partitionConsumer, err := consumer.ConsumePartition(topic, i, sarama.OffsetNewest)
+	handler := PaymentInitiateHandler{
+		Dependency:   d,
+		TopicPayment: topicPayment,
+		TopicRefund:  topicRefund,
+	}
+
+	for {
+		err := consumerGroup.Consume(context.Background(), []string{topicPayment, topicRefund}, &handler)
 		if err != nil {
-			helpers.Logger.Errorf("failed to create consumer partition %d %s", i, err)
-			return
-		}
-
-		for msg := range partitionConsumer.Messages() {
-			helpers.Logger.Infof("Receive message: %s from partition %d", string(msg.Value), msg.Partition)
-			err := d.PaymentAPI.RefundPayment(msg.Value)
-			if err != nil {
-				helpers.Logger.Error("failed to process payment ", err)
-			}
+			helpers.Logger.Errorf("failed to consuming messages: %v", err)
 		}
 	}
 }

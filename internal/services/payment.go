@@ -6,6 +6,7 @@ import (
 	"ecommerce-payments/helpers"
 	"ecommerce-payments/internal/interfaces"
 	"ecommerce-payments/internal/models"
+	"encoding/json"
 
 	"github.com/pkg/errors"
 )
@@ -62,6 +63,9 @@ func (s *PaymentService) InitiatePayment(ctx context.Context, req models.Payment
 	}
 	resp, err := s.External.WalletTransaction(ctx, trxReq)
 	if err != nil {
+		byteReq, _ := json.Marshal(req)
+		s.External.ProduceKafkaMessage(ctx, helpers.GetEnv("KAFKA_TOPIC_PAYMENT_INITIATE", "payment-initiation-topic"), byteReq)
+
 		return errors.Wrap(err, "failed to precees to wallet transaction")
 	}
 

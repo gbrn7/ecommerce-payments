@@ -19,8 +19,7 @@ func main() {
 	// helpers.SetupRedis()
 
 	// run kafka consumer
-	go cmd.ServeKafkaConsumerPaymentInit()
-	go cmd.ServeKafkaConsumerRefund()
+	go cmd.ServeKafkaConsumerGroup()
 
 	// run http
 	cmd.ServeHTTP()
